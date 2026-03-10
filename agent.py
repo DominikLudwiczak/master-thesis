@@ -69,7 +69,7 @@ class RepoAgent:
             "Start analyzing repository. Read README.md first."
         )
 
-        for _ in range(30):
+        for _ in range(1):
 
             action = self.think()
 
