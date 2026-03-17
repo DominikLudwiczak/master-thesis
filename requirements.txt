@@ -1,2 +1,4 @@
-openai==2.26.0
-python-dotenv==1.2.2
+gitpython==3.1.43
+requests==2.32.3
+ollama==0.3.3
+pydantic==2.7.4
