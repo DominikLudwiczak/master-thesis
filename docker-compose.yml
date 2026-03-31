@@ -31,8 +31,8 @@ services:
     entrypoint: >
       sh -c "
         sleep 5 &&
-        ollama pull ${AGENT_MODEL:-qwen2.5-coder:14b} &&
-        ollama pull ${ANALYSIS_MODEL:-llama3.2:3b}
+        ollama pull ${AGENT_MODEL:-llama3.2:1b} &&
+        ollama pull ${ANALYSIS_MODEL:-llama3.2:1b}
       "
     environment:
       OLLAMA_HOST: http://ollama:11434
@@ -51,7 +51,7 @@ services:
       - ~/.openhands:/.openhands
       - ./workspace:/opt/workspace_base
     environment:
-      LLM_MODEL: "ollama/${AGENT_MODEL:-qwen2.5-coder:14b}"
+      LLM_MODEL: "ollama/${AGENT_MODEL:-llama3.2:1b}"
       LLM_BASE_URL: "http://ollama:11434"
       LLM_API_KEY: "ollama"
       SANDBOX_RUNTIME_CONTAINER_IMAGE: "docker.openhands.dev/openhands/runtime:1.4-nikolaik"
@@ -81,7 +81,7 @@ services:
     environment:
       OPENHANDS_URL: "http://openhands:3000"
       OLLAMA_URL: "http://ollama:11434"
-      ANALYSIS_MODEL: "${ANALYSIS_MODEL:-llama3.2:3b}"
+      ANALYSIS_MODEL: "${ANALYSIS_MODEL:-llama3.2:1b}"
       GITHUB_REPO: "${GITHUB_REPO:-}"
     depends_on:
       openhands:
