@@ -1,0 +1,94 @@
+services:
+
+  # ─── Ollama: local LLM server ─────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # GPU support
+#    deploy:
+#      resources:
+#        reservations:
+#          devices:
+#            - driver: nvidia
+#              count: all
+#              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: ollama-pull
+    restart: "no"
+    entrypoint: >
+      sh -c "
+        sleep 5 &&
+        ollama pull ${AGENT_MODEL:-qwen2.5-coder:14b} &&
+        ollama pull ${ANALYSIS_MODEL:-llama3.2:3b}
+      "
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  openhands:
+    image: docker.openhands.dev/openhands/openhands:1.4
+    container_name: openhands
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.openhands:/.openhands
+      - ./workspace:/opt/workspace_base
+    environment:
+      LLM_MODEL: "ollama/${AGENT_MODEL:-qwen2.5-coder:14b}"
+      LLM_BASE_URL: "http://ollama:11434"
+      LLM_API_KEY: "ollama"
+      SANDBOX_RUNTIME_CONTAINER_IMAGE: "docker.openhands.dev/openhands/runtime:1.4-nikolaik"
+      WORKSPACE_MOUNT_PATH: "${PWD}/workspace"
+      LOG_ALL_EVENTS: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: orchestrator
+    restart: "no"
+    volumes:
+      - ./workspace:/workspace
+      - ./results:/results
+    environment:
+      OPENHANDS_URL: "http://openhands:3000"
+      OLLAMA_URL: "http://ollama:11434"
+      ANALYSIS_MODEL: "${ANALYSIS_MODEL:-llama3.2:3b}"
+      GITHUB_REPO: "${GITHUB_REPO:-}"
+    depends_on:
+      openhands:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+volumes:
+  ollama_data:
+    driver: local
