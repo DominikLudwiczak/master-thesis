@@ -3,6 +3,10 @@ from agent import RepoAgent
 
 
 def clone(repo_url):
+    subprocess.run(
+        f"rm -r workspace",
+        shell=True
+    )
 
     subprocess.run(
         f"git clone {repo_url} workspace",
@@ -14,7 +18,7 @@ def main():
 
     repo = "https://github.com/coinse/fonte"
 
-    clone(repo)
+    # clone(repo)
 
     agent = RepoAgent("workspace")
 

@@ -24,6 +24,8 @@ Respond ONLY with JSON:
  "explanation": "reason"
 }
 
+do not add any other text, information, etc. Provide in response pure JSON with structure given above.
+
 Rules:
 - Inspect README first
 - Prefer creating a python virtual environment

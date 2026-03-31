@@ -2,7 +2,7 @@ import json
 from tools import run_command, read_file, list_dir
 from safety import safe
 from llm import ask_llm, SYSTEM_PROMPT
-
+import re
 
 class RepoAgent:
 
@@ -26,7 +26,8 @@ class RepoAgent:
         self.messages.append(
             {"role": "assistant", "content": reply}
         )
-
+        reply = re.search(r'\{.*\}', reply, re.S).group()
+        print(reply)
         return json.loads(reply)
 
     def act(self, action):
@@ -36,7 +37,7 @@ class RepoAgent:
 
         if t == "run":
 
-            cmd = args["cmd"]
+            cmd = args["command"]
 
             if not safe(cmd):
                 return "Command blocked for safety"
@@ -69,11 +70,14 @@ class RepoAgent:
             "Start analyzing repository. Read README.md first."
         )
 
-        for _ in range(1):
+        for _ in range(50):
 
             action = self.think()
 
             result = self.act(action)
+
+            # print(result)
+            # print('-'*20)
 
             if result == "FINISHED":
                 print("Agent finished")
