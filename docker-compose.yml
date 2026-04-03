@@ -18,7 +18,7 @@ services:
 #              count: all
 #              capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD", "ollama", "list"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -31,7 +31,7 @@ services:
     entrypoint: >
       sh -c "
         sleep 5 &&
-        ollama pull ${AGENT_MODEL:-llama3.2:1b} &&
+        ollama pull ${AGENT_MODEL:-qwen2.5-coder:3b} &&
         ollama pull ${ANALYSIS_MODEL:-llama3.2:1b}
       "
     environment:
@@ -51,7 +51,7 @@ services:
       - ~/.openhands:/.openhands
       - ./workspace:/opt/workspace_base
     environment:
-      LLM_MODEL: "ollama/${AGENT_MODEL:-llama3.2:1b}"
+      LLM_MODEL: "ollama/${AGENT_MODEL:-qwen2.5-coder:3b}"
       LLM_BASE_URL: "http://ollama:11434"
       LLM_API_KEY: "ollama"
       SANDBOX_RUNTIME_CONTAINER_IMAGE: "docker.openhands.dev/openhands/runtime:1.4-nikolaik"
