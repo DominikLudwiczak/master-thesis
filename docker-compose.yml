@@ -83,6 +83,7 @@ services:
       OLLAMA_URL: "http://ollama:11434"
       ANALYSIS_MODEL: "${ANALYSIS_MODEL:-llama3.2:1b}"
       GITHUB_REPO: "${GITHUB_REPO:-}"
+      GITHUB_REPOS: "${GITHUB_REPOS:-}"
     depends_on:
       openhands:
         condition: service_healthy
