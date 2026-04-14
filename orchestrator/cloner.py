@@ -33,7 +33,6 @@ def clone_repo(github_url: str, workspace_path: str) -> tuple[pathlib.Path, str]
 
 
 def _sparse_clone(github_url: str, dest: pathlib.Path) -> None:
-    """Shallow clone skipping large data/dataset/model dirs to save disk space."""
     dest.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init"], cwd=dest, check=True)
     subprocess.run(["git", "remote", "add", "origin", github_url], cwd=dest, check=True)

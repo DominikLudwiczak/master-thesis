@@ -34,11 +34,6 @@ README:
 
 
 def ensure_openhands_settings(openhands_url: str) -> None:
-    """
-    OpenHands 1.x requires settings to be POSTed at least once before
-    POST /api/conversations will work — even with LLM env vars set.
-    Safe to call on every run.
-    """
     agent_model = os.getenv("AGENT_MODEL", "qwen2.5-coder:14b")
     ollama_base = os.getenv("OLLAMA_URL", "http://ollama:11434")
     payload = {
@@ -54,10 +49,6 @@ def ensure_openhands_settings(openhands_url: str) -> None:
 
 
 def run_openhands_agent(openhands_url: str, readme: str) -> str:
-    """
-    Send task to OpenHands via its REST API and poll for completion.
-    Returns the agent's final text output.
-    """
     readme_trimmed = _smart_truncate_readme(readme, max_chars=6000)
     task = AGENT_TASK_TEMPLATE.format(readme=readme_trimmed)
 
@@ -76,7 +67,6 @@ def run_openhands_agent(openhands_url: str, readme: str) -> str:
     conversation_id = resp.json()["conversation_id"]
     print(f"    conversation id: {conversation_id}")
 
-    # Poll until done (max 20 min)
     deadline = time.time() + 1200
     while time.time() < deadline:
         time.sleep(10)
@@ -99,7 +89,6 @@ def run_openhands_agent(openhands_url: str, readme: str) -> str:
 
 
 def _smart_truncate_readme(readme: str, max_chars: int) -> str:
-    """Keep sections that mention install/usage/experiment/run."""
     if len(readme) <= max_chars:
         return readme
     priority_keywords = ["install", "usage", "run", "experiment", "reproduc", "requirement", "setup"]

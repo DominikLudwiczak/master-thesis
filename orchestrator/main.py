@@ -19,18 +19,14 @@ from cloner import clone_repo
 from agent import run_openhands_agent
 from analyzer import analyze_with_ollama
 
-
-# ── Define repos to reproduce ─────────────────────────────────────────────────
-# Edit this list to run a batch without any CLI arguments.
-
 REPOS = [
     "https://github.com/coinse/fonte",
+    "https://github.com/Generative-Program-Analysis/icse23-artifact-evaluation",
     "https://github.com/apicad1/artifact",
-    "https://github.com/SageSELab/AidUI"
+    "https://zenodo.org/records/7626930",
+    "https://github.com/SageSELab/AidUI",
+    "https://github.com/soarsmu/Chronos"
 ]
-
-
-# ── Config (from env / defaults) ──────────────────────────────────────────────
 
 OPENHANDS_URL  = os.getenv("OPENHANDS_URL", "http://localhost:3000")
 OLLAMA_URL     = os.getenv("OLLAMA_URL",    "http://localhost:11434")
@@ -38,9 +34,6 @@ ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "llama3.2:3b")
 WORKSPACE_PATH = os.getenv("WORKSPACE_PATH", "/opt/workspace")
 RESULTS_DIR    = pathlib.Path(os.getenv("RESULTS_DIR", "/app/results"))
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-# ── Orchestration ──────────────────────────────────────────────────────────────
 
 def reproduce(github_url: str) -> ReproductionResult:
     repo_path, readme = clone_repo(github_url, WORKSPACE_PATH)
@@ -65,10 +58,7 @@ def reproduce(github_url: str) -> ReproductionResult:
     return result
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    # Resolve repo list: CLI args > GITHUB_REPOS env > GITHUB_REPO env > REPOS list
     if len(sys.argv) >= 2:
         urls = sys.argv[1:]
     elif os.environ.get("GITHUB_REPOS"):
@@ -98,7 +88,6 @@ if __name__ == "__main__":
             print(f"  ERROR: {exc}")
             results.append({"repo_url": url, "verdict": "error", "analysis": str(exc)})
 
-    # ── Final summary ──────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
     print("SUMMARY")
     print(f"{'='*60}")
