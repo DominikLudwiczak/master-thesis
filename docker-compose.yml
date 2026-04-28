@@ -31,7 +31,7 @@ services:
     entrypoint: >
       sh -c "
         sleep 5 &&
-        ollama pull ${AGENT_MODEL:-qwen2.5-coder:3b} &&
+        ollama pull ${AGENT_MODEL:-qwen2.5-coder:14b} &&
         ollama pull ${ANALYSIS_MODEL:-llama3.2:1b}
       "
     environment:
@@ -41,7 +41,9 @@ services:
         condition: service_healthy
 
   openhands:
-    image: docker.openhands.dev/openhands/openhands:1.4
+    build:
+      context: ./openhands
+      dockerfile: Dockerfile
     container_name: openhands
     restart: unless-stopped
     ports:
@@ -51,14 +53,13 @@ services:
       - ~/.openhands:/.openhands
       - ./workspace:/opt/workspace_base
     environment:
-      LLM_MODEL: "ollama/${AGENT_MODEL:-qwen2.5-coder:3b}"
+      LLM_MODEL: "ollama/${AGENT_MODEL:-qwen2.5-coder:14b}"
       LLM_BASE_URL: "http://ollama:11434"
       LLM_API_KEY: "ollama"
       SANDBOX_RUNTIME_CONTAINER_IMAGE: "docker.openhands.dev/openhands/runtime:1.4-nikolaik"
       WORKSPACE_MOUNT_PATH: "${PWD}/workspace"
+      SANDBOX_RUNTIME_BINDING_ADDRESS: "0.0.0.0"
       LOG_ALL_EVENTS: "true"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       ollama:
         condition: service_healthy

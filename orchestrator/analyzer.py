@@ -33,6 +33,15 @@ error_type meanings (if verdict != reproduced):
 
 def analyze_with_ollama(agent_output: str, ollama_url: str, model: str) -> dict:
     print("[3/3] Analyzing result with Ollama...")
+
+    if agent_output.startswith("TIMEOUT"):
+        return {
+            "verdict": "failed",
+            "error_type": "timeout",
+            "metrics_found": {},
+            "explanation": "Agent did not finish within the time limit. No experiment output to analyze.",
+        }
+
     client = ollama.Client(host=ollama_url)
     response = client.chat(
         model=model,

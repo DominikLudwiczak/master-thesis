@@ -13,6 +13,7 @@ import os
 import json
 import time
 import pathlib
+import subprocess
 
 from models import ReproductionResult
 from cloner import clone_repo
@@ -30,29 +31,70 @@ REPOS = [
 
 OPENHANDS_URL  = os.getenv("OPENHANDS_URL", "http://localhost:3000")
 OLLAMA_URL     = os.getenv("OLLAMA_URL",    "http://localhost:11434")
-ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "llama3.2:3b")
-WORKSPACE_PATH = os.getenv("WORKSPACE_PATH", "/opt/workspace")
-RESULTS_DIR    = pathlib.Path(os.getenv("RESULTS_DIR", "/app/results"))
+ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "llama3.2:1b")
+WORKSPACE_PATH = os.getenv("WORKSPACE_PATH", "/workspace")
+RESULTS_DIR    = pathlib.Path(os.getenv("RESULTS_DIR", "/results"))
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+def _extract_json_object(text: str) -> dict | None:
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth, in_str, escape = 0, False, False
+    for i, ch in enumerate(text[start:], start):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_str:
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
 def reproduce(github_url: str) -> ReproductionResult:
-    repo_path, readme = clone_repo(github_url, WORKSPACE_PATH)
-    agent_output      = run_openhands_agent(OPENHANDS_URL, readme)
-    analysis          = analyze_with_ollama(agent_output, OLLAMA_URL, ANALYSIS_MODEL)
-
-    result = ReproductionResult(
-        repo_url      = github_url,
-        agent_output  = agent_output,
-        verdict       = analysis.get("verdict", "unknown"),
-        error_type    = analysis.get("error_type"),
-        metrics_found = analysis.get("metrics_found", {}),
-        analysis      = analysis.get("explanation", ""),
-    )
-
     slug = github_url.rstrip("/").split("/")[-1]
     out_path = RESULTS_DIR / f"{slug}_{int(time.time())}.json"
+
+    repo_path, readme = clone_repo(github_url, WORKSPACE_PATH)
+    agent_output, agent_events = run_openhands_agent(OPENHANDS_URL, readme, str(repo_path))
+
+    partial = {
+        "repo_url": github_url,
+        "agent_output": agent_output,
+    }
+    out_path.write_text(json.dumps(partial, indent=2))
+    print(f"\nPartial result saved → {out_path}")
+
+    analysis = analyze_with_ollama(agent_output, OLLAMA_URL, ANALYSIS_MODEL)
+
+    agent_json = _extract_json_object(agent_output) or {}
+    result = ReproductionResult(
+        repo_url           = github_url,
+        agent_output       = agent_output,
+        steps_completed    = agent_json.get("steps_completed", []),
+        conversation_trace = agent_events,
+        verdict            = analysis.get("verdict", "unknown"),
+        error_type         = analysis.get("error_type"),
+        metrics_found      = analysis.get("metrics_found", {}),
+        analysis           = analysis.get("explanation", ""),
+    )
+
     out_path.write_text(result.model_dump_json(indent=2))
-    print(f"\nResult saved → {out_path}")
+    print(f"Result finalised → {out_path}")
     print(f"Verdict: {result.verdict}")
     print(f"Analysis: {result.analysis}")
     return result
@@ -73,6 +115,10 @@ if __name__ == "__main__":
         print("       or set GITHUB_REPOS=url1,url2 in the environment")
         print("       or edit the REPOS list at the top of main.py")
         sys.exit(1)
+
+    workspace = pathlib.Path(WORKSPACE_PATH)
+    subprocess.run(["find", str(workspace), "-mindepth", "1", "-delete"], check=True)
+    subprocess.run(["find", str(RESULTS_DIR), "-mindepth", "1", "-delete"], check=True)
 
     print(f"\n{'='*60}")
     print(f"Running {len(urls)} repo(s)")
