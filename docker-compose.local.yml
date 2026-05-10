@@ -1,0 +1,63 @@
+# Local configuration: uses host Ollama (with GPU) instead of Docker container.
+# Usage:
+#   docker compose -f docker-compose.local.yml up openhands --build -d
+#   docker compose -f docker-compose.local.yml run orchestrator
+#   GITHUB_REPO=https://github.com/org/repo docker compose -f docker-compose.local.yml run orchestrator
+#
+# Prerequisites:
+#   - Ollama running on the host (port 11434)
+#   - Models pulled: ollama pull qwen2.5-coder:7b && ollama pull llama3.2:1b
+
+services:
+
+  openhands:
+    build:
+      context: ./openhands
+      dockerfile: Dockerfile
+    container_name: openhands
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.openhands:/.openhands
+      - ./workspace:/opt/workspace_base
+    environment:
+      LLM_MODEL: "ollama/${AGENT_MODEL:-qwen2.5-coder:7b}"
+      LLM_BASE_URL: "http://host.docker.internal:11434"
+      LLM_API_KEY: "ollama"
+      SANDBOX_RUNTIME_CONTAINER_IMAGE: "docker.openhands.dev/openhands/runtime:1.4-nikolaik"
+      WORKSPACE_MOUNT_PATH: "${PWD}/workspace"
+      SANDBOX_RUNTIME_BINDING_ADDRESS: "0.0.0.0"
+      LOG_ALL_EVENTS: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: orchestrator
+    restart: "no"
+    volumes:
+      - ./workspace:/workspace
+      - ./results:/results
+    environment:
+      OPENHANDS_URL: "http://openhands:3000"
+      OLLAMA_URL: "http://host.docker.internal:11434"
+      AGENT_MODEL: "${AGENT_MODEL:-qwen2.5-coder:7b}"
+      ANALYSIS_MODEL: "${ANALYSIS_MODEL:-llama3.2:1b}"
+      GITHUB_REPO: "${GITHUB_REPO:-}"
+      GITHUB_REPOS: "${GITHUB_REPOS:-}"
+      PYTHONUNBUFFERED: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      openhands:
+        condition: service_healthy

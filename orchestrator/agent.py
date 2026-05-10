@@ -6,6 +6,7 @@ import requests
 
 AGENT_TASK_TEMPLATE = """\
 You are reproducing a scientific experiment from a GitHub repository.
+IMPORTANT: Do NOT ask for confirmation. Do NOT wait for user input. Execute all steps immediately and autonomously.
 
 The repository has been cloned to {repo_path}.
 All your work must be done inside that directory — start by running: cd {repo_path}
