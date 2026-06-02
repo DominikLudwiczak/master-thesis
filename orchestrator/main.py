@@ -11,6 +11,7 @@ Usage:
 import sys
 import os
 import json
+import shutil
 import time
 import pathlib
 import subprocess
@@ -21,12 +22,18 @@ from agent import run_openhands_agent
 from analyzer import analyze_with_ollama
 
 REPOS = [
+    "https://github.com/SKKU-SecLab/SmartMark",
     "https://github.com/coinse/fonte",
-    "https://github.com/Generative-Program-Analysis/icse23-artifact-evaluation",
-    "https://github.com/apicad1/artifact",
-    "https://zenodo.org/records/7626930",
     "https://github.com/SageSELab/AidUI",
-    "https://github.com/soarsmu/Chronos"
+    "https://github.com/soarsmu/Chronos",
+    "https://zenodo.org/records/7536375#.Y8JfSuxBwUE",
+    "https://github.com/UsmanGohar/FairEnsemble",
+    "https://zenodo.org/records/7566398?preview_file=ExploratoryCaseStudySpecs.zip",
+    "https://github.com/SageSELab/AidUI",
+    "https://github.com/jspaper22/bftdetector",
+    "https://zenodo.org/records/7622528",
+    "https://github.com/Generative-Program-Analysis/icse23-artifact-evaluation",
+    "https://github.com/ucd-plse/On-the-Reproducibility",
 ]
 
 OPENHANDS_URL  = os.getenv("OPENHANDS_URL", "http://localhost:3000")
@@ -34,6 +41,7 @@ OLLAMA_URL     = os.getenv("OLLAMA_URL",    "http://localhost:11434")
 ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "llama3.2:1b")
 WORKSPACE_PATH = os.getenv("WORKSPACE_PATH", "/workspace")
 RESULTS_DIR    = pathlib.Path(os.getenv("RESULTS_DIR", "/results"))
+RESUME         = os.getenv("RESUME", "false").lower() in ("1", "true", "yes")
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 def _extract_json_object(text: str) -> dict | None:
@@ -65,15 +73,35 @@ def _extract_json_object(text: str) -> dict | None:
     return None
 
 
-def reproduce(github_url: str) -> ReproductionResult:
-    slug = github_url.rstrip("/").split("/")[-1]
+def find_completed_result(url: str) -> pathlib.Path | None:
+    """Return path to a completed result file for this URL, or None.
+
+    A completed result has a 'verdict' field (the full ReproductionResult),
+    as opposed to a partial file (written after agent run but before analysis).
+    """
+    for f in sorted(RESULTS_DIR.glob("*.json")):
+        if f.name.startswith("summary_"):
+            continue
+        try:
+            data = json.loads(f.read_text())
+        except Exception:
+            continue
+        if data.get("repo_url") == url and "verdict" in data:
+            return f
+    return None
+
+
+def reproduce(url: str) -> ReproductionResult:
+    slug = url.rstrip("/").split("/")[-1].replace(".git", "")
     out_path = RESULTS_DIR / f"{slug}_{int(time.time())}.json"
 
-    repo_path, readme = clone_repo(github_url, WORKSPACE_PATH)
+    repo_path, readme = clone_repo(url, WORKSPACE_PATH)
     agent_output, agent_events = run_openhands_agent(OPENHANDS_URL, readme, str(repo_path))
+    shutil.rmtree(repo_path, ignore_errors=True)
+    print(f"    Removed repo dir {repo_path}")
 
     partial = {
-        "repo_url": github_url,
+        "repo_url": url,
         "agent_output": agent_output,
     }
     out_path.write_text(json.dumps(partial, indent=2))
@@ -83,7 +111,7 @@ def reproduce(github_url: str) -> ReproductionResult:
 
     agent_json = _extract_json_object(agent_output) or {}
     result = ReproductionResult(
-        repo_url           = github_url,
+        repo_url           = url,
         agent_output       = agent_output,
         steps_completed    = agent_json.get("steps_completed", []),
         conversation_trace = agent_events,
@@ -117,17 +145,33 @@ if __name__ == "__main__":
         sys.exit(1)
 
     workspace = pathlib.Path(WORKSPACE_PATH)
-    subprocess.run(["find", str(workspace), "-mindepth", "1", "-delete"], check=True)
-    subprocess.run(["find", str(RESULTS_DIR), "-mindepth", "1", "-delete"], check=True)
+
+    if RESUME:
+        print("Resume mode: skipping workspace/results cleanup.")
+    else:
+        subprocess.run(["find", str(workspace), "-mindepth", "1", "-delete"], check=True)
+        subprocess.run(["find", str(RESULTS_DIR), "-mindepth", "1", "-delete"], check=True)
 
     print(f"\n{'='*60}")
-    print(f"Running {len(urls)} repo(s)")
+    print(f"Running {len(urls)} repo(s){' (resume mode)' if RESUME else ''}")
     print(f"{'='*60}\n")
 
     results = []
     for i, url in enumerate(urls, 1):
         print(f"\n[Repo {i}/{len(urls)}] {url}")
         print("-" * 60)
+
+        if RESUME:
+            completed = find_completed_result(url)
+            if completed:
+                print(f"  Already completed, loading result from {completed.name}")
+                try:
+                    results.append(ReproductionResult.model_validate_json(completed.read_text()))
+                except Exception as exc:
+                    print(f"  WARNING: could not load existing result ({exc}), re-running.")
+                else:
+                    continue
+
         try:
             results.append(reproduce(url))
         except Exception as exc:

@@ -60,6 +60,7 @@ services:
       WORKSPACE_MOUNT_PATH: "${PWD}/workspace"
       SANDBOX_RUNTIME_BINDING_ADDRESS: "0.0.0.0"
       LOG_ALL_EVENTS: "true"
+      SANDBOX_KEEP_RUNTIME_ALIVE: "false"
     depends_on:
       ollama:
         condition: service_healthy
@@ -85,6 +86,7 @@ services:
       ANALYSIS_MODEL: "${ANALYSIS_MODEL:-llama3.2:1b}"
       GITHUB_REPO: "${GITHUB_REPO:-}"
       GITHUB_REPOS: "${GITHUB_REPOS:-}"
+      RESUME: "${RESUME:-false}"
     depends_on:
       openhands:
         condition: service_healthy
