@@ -29,6 +29,12 @@ Your goal:
 }}
 ```
 
+CRITICAL RULES — follow these strictly:
+- NEVER repeat the same command more than 2 times. If a command fails twice, stop retrying and try a completely different approach (different tool, skip the step, or work with what you have).
+- If a download fails or times out twice, skip it and note it as a missing dependency in your final JSON.
+- If installing system packages fails, try alternative methods (pip, conda) or skip and continue.
+- Always make forward progress. Do not get stuck on one step — move on and report what you could and could not do.
+
 README:
 ---
 {readme}
@@ -73,6 +79,7 @@ def run_openhands_agent(openhands_url: str, readme: str, repo_path: str) -> tupl
     all_events: list[dict] = []
     last_event_id = -1
     deadline = time.time() + 1200
+    agent_error_state: str | None = None
 
     while time.time() < deadline:
         time.sleep(10)
@@ -94,8 +101,30 @@ def run_openhands_agent(openhands_url: str, readme: str, repo_path: str) -> tupl
             if description:
                 print(f"  {description}")
 
+            # Detect terminal agent states from events (the conversation
+            # status may stay RUNNING even after the agent errors out).
+            if event.get("observation") == "agent_state_changed":
+                agent_state = event.get("extras", {}).get("agent_state", "")
+                if agent_state in ("error", "stopped", "finished", "awaiting_user_input"):
+                    agent_error_state = agent_state
+
+        # Check conversation-level status first
         if state.lower() in ("finished", "error", "stopped", "awaiting_user_input"):
             final_message = _last_assistant_message(all_events) or str(data)
+            return final_message, all_events
+
+        # Fall back to agent-level state detected from events
+        if agent_error_state:
+            reason = _agent_error_reason(all_events)
+            print(f"[info] Agent reached terminal state '{agent_error_state}' (conversation status still '{state}')")
+
+            if agent_error_state == "awaiting_user_input":
+                # Agent did real work but stopped to ask — send full
+                # event summary to the LLM for a proper verdict.
+                summary = _summarize_events(all_events)
+                final_message = f"Agent stopped (awaiting user input) after these steps:\n\n{summary}"
+            else:
+                final_message = f"AGENT_ERROR ({agent_error_state}): {reason}\n\n{_summarize_events(all_events)}"
             return final_message, all_events
 
     return "TIMEOUT: agent did not finish within 20 minutes", all_events
@@ -186,10 +215,53 @@ def _describe_event(event: dict) -> str | None:
     return None
 
 
+def _agent_error_reason(events: list[dict]) -> str:
+    """Extract the error reason from agent_state_changed events."""
+    for event in reversed(events):
+        if event.get("observation") == "agent_state_changed":
+            reason = event.get("extras", {}).get("reason", "")
+            if reason:
+                return reason
+    return "unknown error"
+
+
+def _summarize_events(events: list[dict], max_chars: int = 4000) -> str:
+    """Build a readable summary of what the agent did from event history."""
+    lines = []
+    for event in events:
+        source = event.get("source", "")
+        action = event.get("action", "")
+        observation = event.get("observation", "")
+        args = event.get("args", {}) if isinstance(event.get("args"), dict) else {}
+        content = event.get("content", "")
+
+        if source == "agent" and action == "run":
+            cmd = args.get("command", "")
+            lines.append(f"$ {cmd}")
+        elif source == "environment" and observation == "run":
+            if content:
+                # Keep last 300 chars of output to capture errors/results
+                trimmed = content[-300:] if len(content) > 300 else content
+                lines.append(trimmed)
+        elif source == "agent" and action == "message":
+            msg = event.get("message") or content
+            if msg:
+                lines.append(f"[agent] {msg}")
+        elif observation == "agent_state_changed":
+            state = event.get("extras", {}).get("agent_state", "")
+            reason = event.get("extras", {}).get("reason", "")
+            if state:
+                lines.append(f"[state] {state}" + (f": {reason}" if reason else ""))
+
+    summary = "\n".join(lines)
+    if len(summary) > max_chars:
+        summary = summary[-max_chars:]
+    return summary
+
+
 def _last_assistant_message(events: list[dict]) -> str:
     for event in reversed(events):
         source = event.get("source") or event.get("role", "")
-        print(f"    [debug] checking event from {source} with action {event.get('action', '')}")
         if source == "agent":
             content = event.get("message") or event.get("content", "")
             if content:
