@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 
 import git
+import requests as http_requests
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -69,8 +70,18 @@ class GitHubZipStrategy(CloneStrategy):
         dest.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
             tmp_path = pathlib.Path(tmp.name)
-            with urllib.request.urlopen(zip_url) as resp:
-                shutil.copyfileobj(resp, tmp)
+            resp = http_requests.get(zip_url, stream=True, timeout=300)
+            resp.raise_for_status()
+            downloaded = 0
+            last_logged = 0
+            for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                tmp.write(chunk)
+                downloaded += len(chunk)
+                mb = downloaded // (1024 * 1024)
+                if mb >= last_logged + 50:
+                    print(f"    {mb} MB downloaded …")
+                    last_logged = mb
+            print(f"    Download complete: {downloaded / (1024*1024):.0f} MB")
         try:
             with zipfile.ZipFile(tmp_path) as zf:
                 # GitHub ZIPs wrap content in a top-level "{repo}-{sha}/" dir — strip it

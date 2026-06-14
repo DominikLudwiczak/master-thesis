@@ -18,7 +18,7 @@ import subprocess
 
 from models import ReproductionResult
 from cloner import clone_repo
-from agent import run_openhands_agent
+from agent import run_openhands_agent, classify_agent_run, stop_conversation
 from analyzer import analyze_with_ollama
 
 REPOS = [
@@ -96,20 +96,42 @@ def reproduce(url: str) -> ReproductionResult:
     out_path = RESULTS_DIR / f"{slug}_{int(time.time())}.json"
 
     repo_path, readme = clone_repo(url, WORKSPACE_PATH)
-    agent_output, agent_events = run_openhands_agent(OPENHANDS_URL, readme, str(repo_path))
-    shutil.rmtree(repo_path, ignore_errors=True)
-    print(f"    Removed repo dir {repo_path}")
+    agent_output, agent_events, conversation_id = run_openhands_agent(
+        OPENHANDS_URL, readme, str(repo_path)
+    )
+
+    # Stop the OpenHands conversation before cleaning up the workspace.
+    # The runtime container stays alive after our polling loop exits, so
+    # deleting the repo dir while it's still mounted would pull the rug
+    # out from under the agent.
+    stop_conversation(OPENHANDS_URL, conversation_id)
+
+    agent_quality = classify_agent_run(agent_events)
+    print(f"    Agent quality: {agent_quality['quality']} "
+          f"(commands={agent_quality['meaningful_commands']}, "
+          f"unique={agent_quality['unique_commands']}, "
+          f"repetition={agent_quality['repetition_ratio']:.0%}, "
+          f"errors={agent_quality['total_errors']}, "
+          f"stuck={agent_quality['agent_stuck']})")
 
     partial = {
         "repo_url": url,
         "agent_output": agent_output,
+        "agent_quality": agent_quality,
     }
     out_path.write_text(json.dumps(partial, indent=2))
     print(f"\nPartial result saved → {out_path}")
 
-    analysis = analyze_with_ollama(agent_output, OLLAMA_URL, ANALYSIS_MODEL)
-
     agent_json = _extract_json_object(agent_output) or {}
+
+    # If agent explicitly reported missing prerequisites, pass this info
+    prereq_info = None
+    if agent_json.get("prereq_missing"):
+        prereq_info = agent_json.get("missing_prereqs", [])
+
+    analysis = analyze_with_ollama(agent_output, OLLAMA_URL, ANALYSIS_MODEL,
+                                   agent_quality=agent_quality,
+                                   prereq_missing=prereq_info)
     result = ReproductionResult(
         repo_url           = url,
         agent_output       = agent_output,
@@ -118,13 +140,21 @@ def reproduce(url: str) -> ReproductionResult:
         verdict            = analysis.get("verdict", "unknown"),
         error_type         = analysis.get("error_type"),
         metrics_found      = analysis.get("metrics_found", {}),
+        code_modifications = analysis.get("code_modifications", "none"),
+        failure_reason     = analysis.get("failure_reason"),
         analysis           = analysis.get("explanation", ""),
+        agent_quality      = agent_quality,
     )
 
     out_path.write_text(result.model_dump_json(indent=2))
     print(f"Result finalised → {out_path}")
     print(f"Verdict: {result.verdict}")
     print(f"Analysis: {result.analysis}")
+
+    # Clean up workspace AFTER analysis is complete and conversation is stopped
+    shutil.rmtree(repo_path, ignore_errors=True)
+    print(f"    Removed repo dir {repo_path}")
+
     return result
 
 
