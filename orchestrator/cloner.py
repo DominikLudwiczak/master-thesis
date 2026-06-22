@@ -1,15 +1,17 @@
-import io
 import abc
+import io
 import json
 import re
 import shutil
 import tarfile
+import tempfile
 import zipfile
 import pathlib
 import urllib.parse
 import urllib.request
 
 import git
+import requests as http_requests
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -65,17 +67,32 @@ class GitHubZipStrategy(CloneStrategy):
         owner, repo = parts[0], parts[1].replace(".git", "")
         zip_url = f"https://github.com/{owner}/{repo}/archive/HEAD.zip"
         print(f"    Downloading ZIP {zip_url} …")
-        with urllib.request.urlopen(zip_url) as resp:
-            data = resp.read()
         dest.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            # GitHub ZIPs wrap content in a top-level "{repo}-{sha}/" dir — strip it
-            for member in zf.infolist():
-                rel = member.filename.split("/", 1)
-                if len(rel) < 2 or not rel[1]:
-                    continue
-                member.filename = rel[1]
-                zf.extract(member, dest)
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+            tmp_path = pathlib.Path(tmp.name)
+            resp = http_requests.get(zip_url, stream=True, timeout=300)
+            resp.raise_for_status()
+            downloaded = 0
+            last_logged = 0
+            for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                tmp.write(chunk)
+                downloaded += len(chunk)
+                mb = downloaded // (1024 * 1024)
+                if mb >= last_logged + 50:
+                    print(f"    {mb} MB downloaded …")
+                    last_logged = mb
+            print(f"    Download complete: {downloaded / (1024*1024):.0f} MB")
+        try:
+            with zipfile.ZipFile(tmp_path) as zf:
+                # GitHub ZIPs wrap content in a top-level "{repo}-{sha}/" dir — strip it
+                for member in zf.infolist():
+                    rel = member.filename.split("/", 1)
+                    if len(rel) < 2 or not rel[1]:
+                        continue
+                    member.filename = rel[1]
+                    zf.extract(member, dest)
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
 
 class ZenodoStrategy(CloneStrategy):

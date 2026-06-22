@@ -55,6 +55,7 @@ services:
       ANALYSIS_MODEL: "${ANALYSIS_MODEL:-llama3.2:1b}"
       GITHUB_REPO: "${GITHUB_REPO:-}"
       GITHUB_REPOS: "${GITHUB_REPOS:-}"
+      RESUME: "${RESUME:-false}"
       PYTHONUNBUFFERED: "1"
     extra_hosts:
       - "host.docker.internal:host-gateway"
