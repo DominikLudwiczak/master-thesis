@@ -86,7 +86,7 @@ def find_completed_result(url: str) -> pathlib.Path | None:
             data = json.loads(f.read_text())
         except Exception:
             continue
-        if data.get("repo_url") == url and "verdict" in data:
+        if data.get("repo_url") == url and "outcome" in data:
             return f
     return None
 
@@ -130,26 +130,28 @@ def reproduce(url: str) -> ReproductionResult:
         prereq_info = agent_json.get("missing_prereqs", [])
 
     analysis = analyze_with_ollama(agent_output, OLLAMA_URL, ANALYSIS_MODEL,
+                                   readme=readme or "",
                                    agent_quality=agent_quality,
                                    prereq_missing=prereq_info)
     result = ReproductionResult(
-        repo_url           = url,
-        agent_output       = agent_output,
-        steps_completed    = agent_json.get("steps_completed", []),
-        conversation_trace = agent_events,
-        verdict            = analysis.get("verdict", "unknown"),
-        error_type         = analysis.get("error_type"),
-        metrics_found      = analysis.get("metrics_found", {}),
-        code_modifications = analysis.get("code_modifications", "none"),
-        failure_reason     = analysis.get("failure_reason"),
-        analysis           = analysis.get("explanation", ""),
-        agent_quality      = agent_quality,
+        repo_url             = url,
+        agent_output         = agent_output,
+        steps_completed      = analysis.get("steps_completed", ""),
+        conversation_trace   = agent_events,
+        outcome              = analysis.get("outcome", "unknown"),
+        metrics_found        = analysis.get("metrics_found", {}),
+        code_modifications   = analysis.get("code_modifications", "none"),
+        readme_adherence     = analysis.get("readme_adherence", ""),
+        failure_reasons      = analysis.get("failure_reasons"),
+        success_factors      = analysis.get("success_factors"),
+        detailed_description = analysis.get("detailed_description", ""),
+        agent_quality        = agent_quality,
     )
 
     out_path.write_text(result.model_dump_json(indent=2))
     print(f"Result finalised → {out_path}")
-    print(f"Verdict: {result.verdict}")
-    print(f"Analysis: {result.analysis}")
+    print(f"Outcome: {result.outcome}")
+    print(f"Description: {result.detailed_description[:200]}")
 
     # Clean up workspace AFTER analysis is complete and conversation is stopped
     shutil.rmtree(repo_path, ignore_errors=True)
@@ -214,13 +216,12 @@ if __name__ == "__main__":
     for r in results:
         if isinstance(r, ReproductionResult):
             print(f"  {r.repo_url}")
-            print(f"    verdict   : {r.verdict}")
-            print(f"    error_type: {r.error_type}")
-            print(f"    analysis  : {r.analysis}")
+            print(f"    outcome   : {r.outcome}")
+            print(f"    description: {r.detailed_description[:200]}...")
         else:
             print(f"  {r['repo_url']}")
-            print(f"    verdict   : {r['verdict']}")
-            print(f"    analysis  : {r['analysis']}")
+            print(f"    outcome   : {r.get('outcome', r.get('verdict', 'unknown'))}")
+            print(f"    description: {r.get('detailed_description', r.get('analysis', ''))[:200]}...")
         print()
 
     summary_path = RESULTS_DIR / f"summary_{int(time.time())}.json"

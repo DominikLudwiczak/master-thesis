@@ -4,99 +4,64 @@ import ollama
 
 ANALYSIS_PROMPT = """\
 You are analyzing the output of an automated attempt to reproduce a scientific software artifact.
-The goal was to follow the repository's README instructions and run the experiment as described.
+The agent was given the repository's README as its instructions and tried to run the experiment as described.
 
-Agent activity log:
----
+=== README (the instructions the agent was given) ===
+{readme}
+=== END README ===
+
+=== Agent activity log ===
 {agent_output}
----
+=== END Agent activity log ===
 
 {quality_context}
 
-Based on the log above, classify the reproduction attempt.
+Your task is to produce a thorough, open-ended analysis of what happened during this reproduction attempt.
+Do NOT use any predefined verdict taxonomy. Instead, reason from scratch about what you observe.
+
 Please respond with a JSON object only (no markdown, no preamble):
 {{
-  "verdict": "reproduced" | "timeout_running" | "partial" | "failed" | "inconclusive" | "prereq_missing",
-  "error_type": null | "env" | "code" | "data" | "timeout" | "agent" | "prereq",
+  "outcome": "A short, free-form label you devise yourself that best captures the result (e.g. 'training script executed successfully', 'dependency installation failed on numpy version conflict', 'experiment timed out mid-epoch', 'agent looped without progress'). Be specific — avoid generic words like 'failed' or 'success' on their own.",
   "metrics_found": {{}},
-  "steps_completed": "list what was successfully done (e.g. 'cloned repo, installed dependencies, prepared data')",
-  "code_modifications": "list any code changes or workarounds the agent had to apply to the project (e.g. 'changed batch_size to 1, commented out GPU check'). Write 'none' if no modifications were made.",
-  "failure_reason": "if not reproduced — describe the specific error or blocker that prevented completion. Write null if reproduced or timeout_running.",
-  "explanation": "2-3 sentence summary of what happened and why it succeeded or failed"
+  "steps_completed": "Detailed description of every step the agent successfully completed — installation, data download, preprocessing, script execution, etc. Be specific about what worked.",
+  "code_modifications": "Describe any changes or workarounds the agent applied to the repository code (e.g. patched a version pin, commented out a GPU assertion, reduced batch size). Write 'none' if no modifications were made.",
+  "readme_adherence": "Carefully compare what the README instructed with what the agent actually did. Did the agent follow the steps in order? Did it skip any steps? Did it take a different path? Did it repair something broken in the repo? Did it misinterpret any instructions? Be specific and quote relevant parts of both the README and the agent log.",
+  "failure_reasons": "If the experiment did not complete successfully, describe in your own words — without using predefined categories — exactly what went wrong and why. Trace the root cause as specifically as possible (e.g. 'The setup.py required torch==1.9 but the environment had 2.1; pip could not downgrade due to conflicting transitive deps'). Write null if the experiment appears to have completed successfully.",
+  "success_factors": "If the experiment completed or was progressing well, describe what contributed to that outcome. Write null if the experiment did not succeed.",
+  "detailed_description": "Write a comprehensive narrative (at least 5–8 sentences) of the entire run from start to finish. Describe what the agent did at each stage, what obstacles it encountered, how it handled them, and what the final state was. This section will be read by a human researcher who wants to understand what actually happened without having to read the raw log."
 }}
-
-verdict meanings:
-- reproduced: experiment ran to completion and produced plausible results or metrics
-- timeout_running: the experiment was successfully launched and was ACTIVELY RUNNING without errors when the time limit expired. Dependencies were installed, data was prepared, and the main experiment script was executing. This is a POSITIVE outcome — the artifact appears reproducible but our time budget was insufficient. This is NOT a failure of the artifact.
-- partial: some steps succeeded but others genuinely FAILED — e.g. dependencies installed but the experiment script crashed, or 3 out of 5 sub-experiments ran but 2 errored out. Something actually went wrong that prevented completion.
-- failed: the agent genuinely tried to run the experiment (installed dependencies, ran scripts) but the experiment could not be reproduced due to issues in the repository, environment, or data
-- prereq_missing: the experiment requires prerequisites that our environment does not have, such as: GPU/CUDA hardware, API tokens (Hugging Face, Weights & Biases, OpenAI), proprietary datasets with restricted access, commercial software licenses. The artifact might be perfectly reproducible with proper prerequisites — we cannot judge it.
-- inconclusive: the agent itself malfunctioned — it got stuck in a loop, produced empty responses, could not use its tools, or never meaningfully attempted the experiment. We CANNOT judge the repository's reproducibility from this run.
-
-CRITICAL CLASSIFICATION RULES:
-1. Use "inconclusive" when the failure is clearly the agent's fault (tool errors, empty responses, stuck in loop, never ran any experiment commands).
-2. Use "failed" only when the agent genuinely attempted the reproduction and the experiment itself has a real bug or broken setup.
-3. Use "prereq_missing" when the experiment needs something our environment doesn't provide: GPU, API tokens, restricted data access, specific hardware. This is NOT a failure of the artifact — it's a limitation of our test environment.
-4. Use "partial" when some steps FAILED with actual errors — NOT when the agent simply ran out of time while things were working.
-5. Use "timeout_running" when the log starts with TIMEOUT AND the last experiment command was actively running or had just completed without errors. The key distinction: if the experiment was executing normally and time ran out, that is "timeout_running" (positive). If something crashed or errored before timeout, that is "partial" or "failed".
-6. If the log starts with TIMEOUT but the agent never got past setup (installing deps, downloading data), use "partial" — the experiment itself never started running.
-
-error_type meanings:
-- env: missing dependency, wrong Python/Node version, OS incompatibility, package install failure
-- code: bug in the repository code itself
-- data: missing dataset or download failed (publicly available data that should be accessible)
-- timeout: ran out of time
-- agent: the AI agent itself malfunctioned (stuck, empty response, tool calling failure)
-- prereq: requires GPU, API tokens, credentials, restricted data access, or commercial software that our environment lacks
 """
 
 
 def analyze_with_ollama(agent_output: str, ollama_url: str, model: str,
+                        readme: str = "",
                         agent_quality: dict | None = None,
                         prereq_missing: list[str] | None = None) -> dict:
     print("[3/3] Analyzing result with Ollama...")
 
-    # If agent explicitly reported missing prerequisites, short-circuit
-    if prereq_missing:
-        return {
-            "verdict": "prereq_missing",
-            "error_type": "prereq",
-            "metrics_found": {},
-            "explanation": f"Agent identified missing prerequisites: {', '.join(prereq_missing)}. "
-                           "The artifact may be reproducible with proper infrastructure.",
-        }
-
-    if agent_output.startswith("TIMEOUT"):
-        # Timeout with no meaningful work is inconclusive
-        if agent_quality and agent_quality.get("quality") == "none":
-            return {
-                "verdict": "inconclusive",
-                "error_type": "agent",
-                "metrics_found": {},
-                "explanation": "Agent timed out without executing any commands. Cannot assess repository reproducibility.",
-            }
-        # Agent did meaningful work but ran out of time — let the LLM
-        # decide if it's partial, prereq_missing, etc. based on what
-        # was accomplished.  Fall through to the LLM analysis below.
-
     # Build quality context for the LLM
-    quality_context = _build_quality_context(agent_quality)
+    quality_context = _build_quality_context(agent_quality, prereq_missing)
 
     # If agent quality is clearly "none" (empty response, no actions),
-    # short-circuit to inconclusive without LLM call
+    # short-circuit — no point calling the LLM on an empty log
     if agent_quality and agent_quality.get("quality") == "none":
         return {
-            "verdict": "inconclusive",
-            "error_type": "agent",
+            "outcome": "agent produced no actions",
             "metrics_found": {},
-            "explanation": "Agent produced no actions — likely a model incompatibility (empty response, no tool calls). Cannot assess repository reproducibility.",
+            "steps_completed": "none",
+            "code_modifications": "none",
+            "readme_adherence": "The agent never meaningfully started, so no README steps were followed.",
+            "failure_reasons": "The agent produced no tool calls or commands — likely a model incompatibility or empty response. The repository itself was never assessed.",
+            "success_factors": None,
+            "detailed_description": "The agent session started but the model produced no actions whatsoever. This may indicate an empty LLM response, a tool-calling incompatibility, or the agent getting stuck before issuing any commands. No conclusions about the repository's reproducibility can be drawn from this run.",
         }
 
     client = ollama.Client(host=ollama_url)
     response = client.chat(
         model=model,
         messages=[{"role": "user", "content": ANALYSIS_PROMPT.format(
-            agent_output=agent_output[:4000],
+            readme=readme[:3000] if readme else "(README not available)",
+            agent_output=agent_output[:6000],
             quality_context=quality_context,
         )}],
     )
@@ -110,29 +75,36 @@ def analyze_with_ollama(agent_output: str, ollama_url: str, model: str,
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        return {"verdict": "unknown", "error_type": None, "metrics_found": {}, "explanation": raw}
+        return {
+            "outcome": "analysis parse error",
+            "metrics_found": {},
+            "steps_completed": "unknown",
+            "code_modifications": "unknown",
+            "readme_adherence": "Could not parse LLM response.",
+            "failure_reasons": None,
+            "success_factors": None,
+            "detailed_description": raw,
+        }
 
 
-def _build_quality_context(agent_quality: dict | None) -> str:
+def _build_quality_context(agent_quality: dict | None,
+                           prereq_missing: list[str] | None = None) -> str:
     """Build a context string describing the agent's run quality for the LLM."""
-    if not agent_quality:
-        return ""
+    lines = []
 
-    lines = ["Agent run quality assessment:"]
-    q = agent_quality
-    lines.append(f"- Meaningful commands executed: {q['meaningful_commands']}")
-    lines.append(f"- Tool/validation errors encountered: {q['total_errors']}")
+    if prereq_missing:
+        lines.append(f"Note: the agent explicitly reported missing prerequisites: {', '.join(prereq_missing)}.")
 
-    if q["agent_stuck"]:
-        lines.append("- WARNING: Agent got stuck in a loop (AgentStuckInLoopError)")
-    if q["empty_response"]:
-        lines.append("- WARNING: Agent produced NO actions at all (empty response)")
-
-    if q["quality"] == "none":
-        lines.append("- CONCLUSION: Agent never meaningfully attempted the experiment. This should be 'inconclusive'.")
-    elif q["quality"] == "poor":
-        lines.append("- CONCLUSION: Agent had significant technical problems. Consider 'inconclusive' if the agent never got past basic setup.")
-    else:
-        lines.append("- CONCLUSION: Agent made a genuine attempt at reproduction.")
+    if agent_quality:
+        lines.append("Agent run quality metrics:")
+        q = agent_quality
+        lines.append(f"- Meaningful commands executed: {q['meaningful_commands']}")
+        lines.append(f"- Tool/validation errors encountered: {q['total_errors']}")
+        if q["agent_stuck"]:
+            lines.append("- WARNING: Agent got stuck in a loop (AgentStuckInLoopError)")
+        if q["empty_response"]:
+            lines.append("- WARNING: Agent produced NO actions at all (empty response)")
+        if agent_quality.get("quality") == "poor":
+            lines.append("- Note: Agent had significant technical problems — consider how much of the log reflects genuine reproduction attempts vs. agent malfunction.")
 
     return "\n".join(lines)
