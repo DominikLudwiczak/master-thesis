@@ -19,16 +19,31 @@ The agent was given the repository's README as its instructions and tried to run
 Your task is to produce a thorough, open-ended analysis of what happened during this reproduction attempt.
 Do NOT use any predefined verdict taxonomy. Instead, reason from scratch about what you observe.
 
+CRITICAL — grounding rule:
+Every claim you make about the outcome must be traceable to specific content in the agent activity log above
+(a command, a command's output, an error message, or an explicit statement the agent made). Do NOT infer
+success or failure from the agent's tone, from a generic closing remark (e.g. "All done!", "Task complete",
+"Let me know if you need anything else"), or from the mere absence of visible errors. A short or upbeat-sounding
+final message is NOT evidence of success on its own — commands executed via a pipe (e.g. `| tail`) can mask
+non-zero exit codes and real tracebacks, so judge success or failure from the actual command output shown,
+not from exit codes or sign-off language.
+
+If the agent activity log does not contain enough concrete detail (specific commands, outputs, error messages,
+or file/data references) to determine what actually happened, do NOT guess or fill in a plausible-sounding
+narrative. Instead, explicitly say so: set "outcome" to "insufficient log detail to determine outcome" and
+explain in "failure_reasons" that the log lacked the evidence needed to assess the run.
+
 Please respond with a JSON object only (no markdown, no preamble):
 {{
-  "outcome": "A short, free-form label you devise yourself that best captures the result (e.g. 'training script executed successfully', 'dependency installation failed on numpy version conflict', 'experiment timed out mid-epoch', 'agent looped without progress'). Be specific — avoid generic words like 'failed' or 'success' on their own.",
+  "outcome": "A short, free-form label you devise yourself that best captures the result (e.g. 'training script executed successfully', 'dependency installation failed on numpy version conflict', 'experiment timed out mid-epoch', 'agent looped without progress', 'insufficient log detail to determine outcome'). Be specific — avoid generic words like 'failed' or 'success' on their own.",
+  "evidence_quote": "A short, verbatim excerpt (one or two lines) copied directly from the agent activity log above — a command output, error message, traceback, or explicit statement by the agent — that directly supports the 'outcome' you gave. This must be an exact quote from the log, not a paraphrase. If the log does not contain any excerpt that supports a specific outcome, write null.",
   "metrics_found": {{}},
-  "steps_completed": "Detailed description of every step the agent successfully completed — installation, data download, preprocessing, script execution, etc. Be specific about what worked.",
-  "code_modifications": "Describe any changes or workarounds the agent applied to the repository code (e.g. patched a version pin, commented out a GPU assertion, reduced batch size). Write 'none' if no modifications were made.",
-  "readme_adherence": "Carefully compare what the README instructed with what the agent actually did. Did the agent follow the steps in order? Did it skip any steps? Did it take a different path? Did it repair something broken in the repo? Did it misinterpret any instructions? Be specific and quote relevant parts of both the README and the agent log.",
-  "failure_reasons": "If the experiment did not complete successfully, describe in your own words — without using predefined categories — exactly what went wrong and why. Trace the root cause as specifically as possible (e.g. 'The setup.py required torch==1.9 but the environment had 2.1; pip could not downgrade due to conflicting transitive deps'). Write null if the experiment appears to have completed successfully.",
-  "success_factors": "If the experiment completed or was progressing well, describe what contributed to that outcome. Write null if the experiment did not succeed.",
-  "detailed_description": "Write a comprehensive narrative (at least 5–8 sentences) of the entire run from start to finish. Describe what the agent did at each stage, what obstacles it encountered, how it handled them, and what the final state was. This section will be read by a human researcher who wants to understand what actually happened without having to read the raw log."
+  "steps_completed": "Detailed description of every step the agent successfully completed — installation, data download, preprocessing, script execution, etc. Be specific about what worked. Base this only on steps that are explicitly visible in the log, not on assumptions about what 'should' have happened.",
+  "code_modifications": "Describe any changes or workarounds the agent applied to the repository code (e.g. patched a version pin, commented out a GPU assertion, reduced batch size). Write 'none' if no modifications were made, or 'unknown' if the log does not show enough detail to tell.",
+  "readme_adherence": "Carefully compare what the README instructed with what the agent actually did. Did the agent follow the steps in order? Did it skip any steps? Did it take a different path? Did it repair something broken in the repo? Did it misinterpret any instructions? Be specific and quote relevant parts of both the README and the agent log. If the log doesn't show enough of the agent's actions to compare against the README, say so explicitly rather than guessing.",
+  "failure_reasons": "If the experiment did not complete successfully, describe in your own words — without using predefined categories — exactly what went wrong and why, quoting the specific error or symptom from the log. Trace the root cause as specifically as possible (e.g. 'The setup.py required torch==1.9 but the environment had 2.1; pip could not downgrade due to conflicting transitive deps'). If the log lacks enough detail to identify a root cause, say that explicitly instead of speculating. Write null only if the experiment appears to have completed successfully AND the log contains direct evidence of that success.",
+  "success_factors": "If the experiment completed or was progressing well, describe what contributed to that outcome, citing specific evidence from the log. Write null if the experiment did not succeed, or if success cannot be confirmed from the log.",
+  "detailed_description": "Write a comprehensive narrative (at least 5–8 sentences) of the entire run from start to finish, based strictly on what is visible in the log. Describe what the agent did at each stage, what obstacles it encountered, how it handled them, and what the final state was. If the log cuts off, is truncated, or ends abruptly without showing the actual result of the final steps, state that explicitly rather than assuming an outcome. This section will be read by a human researcher who wants to understand what actually happened without having to read the raw log."
 }}
 """
 

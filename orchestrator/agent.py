@@ -31,6 +31,7 @@ Install what the README requires:
 - apt-get install -y <packages>
 - If a package fails, try ONE alternative, then skip it and note it in your report
 - Pipe long outputs: pip install ... 2>&1 | tail -20
+- Do NOT edit setup.py, requirements.txt, pyproject.toml, or any dependency-pin file to work around a version conflict, unless the README explicitly tells you to change it. If a pinned version fails to install, report that as the failure — do not loosen or rewrite the pin yourself.
 
 == PHASE 3: PREPARE DATA (use max 3 commands) ==
 If the experiment needs data preparation (download datasets, preprocess, etc.):
@@ -43,6 +44,7 @@ Run the experiment exactly as the README describes:
 - For notebooks: jupyter nbconvert --to notebook --execute notebook.ipynb 2>&1 | tail -30
 - For shell scripts: bash script.sh 2>&1 | tail -50
 - Check for output files: ls -la output/ results/ *.png *.csv 2>/dev/null
+- If the script raises an error (AttributeError, ImportError, deprecated API call, etc.), do NOT open the file and patch the code to work around it. Capture the exact error and move on — a human trying to reproduce this artifact by hand would hit the same error, and your report needs to reflect that, not a version of the artifact you silently modified.
 
 == PHASE 5: REPORT (MANDATORY — you MUST do this) ==
 Output this JSON block. This is REQUIRED regardless of whether the experiment succeeded or failed:
@@ -53,7 +55,9 @@ Output this JSON block. This is REQUIRED regardless of whether the experiment su
   "prereq_missing": false,
   "missing_prereqs": [],
   "metrics": {{}},
-  "error": null or "description of what went wrong",
+  "error": null or "description of what went wrong, including the exact error message or traceback line if one was produced",
+  "code_modified": true or false,
+  "code_modifications": "If code_modified is true, describe exactly what you changed and why the README instructed it. Write 'none' if code_modified is false.",
   "steps_completed": ["list", "of", "completed", "steps"]
 }}
 ```
@@ -66,7 +70,9 @@ CRITICAL RULES:
 - NEVER run nvidia-smi more than once — the result will NOT change.
 - NEVER run pip install for the same package more than once — it is already installed.
 - Your goal is to ASSESS reproducibility, not to FIX broken code. If something fails, report it — do not spend multiple attempts trying to repair the project.
-- If a step fails, try ONE different approach. If that also fails, move to the next phase.
+- NEVER edit, patch, or rewrite any file inside the repository (source code, setup.py, config files, notebooks, etc.) unless the README explicitly instructs you to make that exact change as a documented setup step. Encountering a bug or a compatibility error is a valid, reportable outcome — it is not something for you to fix. If you are unsure whether a change is "required by the README" versus "a workaround you invented," treat it as invented and do not make it.
+- The one exception is creating a missing directory that a script needs to write output into (e.g. `mkdir -p output/`) when the README's instructions assume it already exists — this is not a code change and is fine to do.
+- If a step fails, try ONE different approach that does not involve modifying repository files (e.g., a different install flag, a different package manager). If that also fails, move to the next phase.
 - ALWAYS use non-interactive flags: apt-get -y, conda -y. pip installs non-interactively by default.
 - You MUST reach PHASE 5 and output the JSON. If you run out of ideas, go to PHASE 5 immediately.
 

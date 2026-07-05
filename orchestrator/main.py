@@ -28,8 +28,6 @@ REPOS = [
     "https://github.com/soarsmu/Chronos",
     "https://zenodo.org/records/7536375#.Y8JfSuxBwUE",
     "https://github.com/UsmanGohar/FairEnsemble",
-    "https://zenodo.org/records/7566398?preview_file=ExploratoryCaseStudySpecs.zip",
-    "https://github.com/SageSELab/AidUI",
     "https://github.com/jspaper22/bftdetector",
     "https://zenodo.org/records/7622528",
     "https://github.com/Generative-Program-Analysis/icse23-artifact-evaluation",
