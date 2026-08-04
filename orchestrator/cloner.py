@@ -26,7 +26,28 @@ def _read_readme(dest: pathlib.Path) -> str:
 
 def _slug(url: str) -> str:
     """Derive a short directory name from any URL."""
-    path = urllib.parse.urlparse(url).path.rstrip("/")
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.rstrip("/")
+
+    # DOI URLs: use the DOI suffix (e.g. 10.5281/zenodo.7037946 → zenodo.7037946)
+    if host == "doi.org":
+        doi_path = path.lstrip("/")
+        name = doi_path.replace("/", ".").replace("m9.", "")
+        return name or "repo"
+
+    # Figshare: use article ID
+    if "figshare.com" in host:
+        match = re.search(r"/(\d+)", path)
+        if match:
+            return f"figshare_{match.group(1)}"
+
+    # GitHub /tree/ref: use repo name, not the ref
+    if "github.com" in host:
+        parts = path.strip("/").split("/")
+        if len(parts) >= 2:
+            return parts[1].replace(".git", "")
+
     name = path.split("/")[-1]
     for ext in (".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".zip"):
         if name.lower().endswith(ext):
@@ -65,7 +86,11 @@ class GitHubZipStrategy(CloneStrategy):
     def fetch(self, url: str, dest: pathlib.Path) -> None:
         parts = urllib.parse.urlparse(url).path.strip("/").split("/")
         owner, repo = parts[0], parts[1].replace(".git", "")
-        zip_url = f"https://github.com/{owner}/{repo}/archive/HEAD.zip"
+        # Use specific ref if URL points to /tree/<ref>, otherwise HEAD
+        ref = "HEAD"
+        if len(parts) >= 4 and parts[2] == "tree":
+            ref = "/".join(parts[3:])
+        zip_url = f"https://github.com/{owner}/{repo}/archive/{ref}.zip"
         print(f"    Downloading ZIP {zip_url} …")
         dest.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
@@ -140,6 +165,58 @@ class ArchiveStrategy(CloneStrategy):
         _extract_or_save(data, file_name, dest)
 
 
+class FigshareStrategy(CloneStrategy):
+    def can_handle(self, url: str) -> bool:
+        host = urllib.parse.urlparse(url).netloc.lower()
+        return "figshare.com" in host
+
+    def fetch(self, url: str, dest: pathlib.Path) -> None:
+        # Extract article ID from URL like /articles/software/NAME/ID/VERSION
+        match = re.search(r"figshare\.com/articles/\w+/\w+/(\d+)(?:/(\d+))?", url)
+        if not match:
+            raise ValueError(f"Cannot extract Figshare article ID from: {url}")
+        article_id = match.group(1)
+        version = match.group(2) or ""
+        api_url = f"https://api.figshare.com/v2/articles/{article_id}"
+        if version:
+            api_url += f"/versions/{version}"
+        print(f"    Fetching Figshare metadata: {api_url}")
+        with urllib.request.urlopen(api_url) as resp:
+            meta = json.loads(resp.read())
+        files = meta.get("files", [])
+        if not files:
+            raise RuntimeError(f"No files found in Figshare article {article_id}")
+        dest.mkdir(parents=True, exist_ok=True)
+        for entry in files:
+            file_url = entry.get("download_url", "")
+            file_name = entry.get("name", file_url.split("/")[-1])
+            print(f"    Downloading {file_name} …")
+            with urllib.request.urlopen(file_url) as resp:
+                data = resp.read()
+            _extract_or_save(data, file_name, dest)
+
+
+class DOIStrategy(CloneStrategy):
+    """Resolve doi.org URLs to their final destination and delegate."""
+
+    def can_handle(self, url: str) -> bool:
+        host = urllib.parse.urlparse(url).netloc.lower()
+        return host == "doi.org"
+
+    def fetch(self, url: str, dest: pathlib.Path) -> None:
+        print(f"    Resolving DOI: {url}")
+        resp = http_requests.head(url, allow_redirects=True, timeout=30)
+        resolved = resp.url
+        print(f"    Resolved to: {resolved}")
+        # Find an appropriate strategy for the resolved URL
+        strategy = next(
+            (s for s in _STRATEGIES if not isinstance(s, DOIStrategy) and s.can_handle(resolved)),
+            GitStrategy(),
+        )
+        print(f"    Delegating to {strategy.__class__.__name__}")
+        strategy.fetch(resolved, dest)
+
+
 class GitStrategy(CloneStrategy):
     _GIT_HOSTS = ("gitlab.com", "bitbucket.org", "codeberg.org", "sourceforge.net")
 
@@ -153,8 +230,10 @@ class GitStrategy(CloneStrategy):
 
 # Ordered by specificity — first match wins; GitStrategy is the catch-all fallback
 _STRATEGIES = [
+    DOIStrategy(),
     GitHubZipStrategy(),
     ZenodoStrategy(),
+    FigshareStrategy(),
     ArchiveStrategy(),
     GitStrategy(),
 ]

@@ -18,20 +18,11 @@ import subprocess
 
 from models import ReproductionResult
 from cloner import clone_repo
-from agent import run_openhands_agent, classify_agent_run, stop_conversation
-from analyzer import analyze_with_ollama
+from agent import run_openhands_agent, classify_agent_run, classify_timeout, stop_conversation, cleanup_stale_runtime_containers
+from analyzer import analyze_with_ollama, analyze_readme_paths
 
 REPOS = [
-    "https://github.com/SKKU-SecLab/SmartMark",
-    "https://github.com/coinse/fonte",
-    "https://github.com/SageSELab/AidUI",
-    "https://github.com/soarsmu/Chronos",
-    "https://zenodo.org/records/7536375#.Y8JfSuxBwUE",
-    "https://github.com/UsmanGohar/FairEnsemble",
-    "https://github.com/jspaper22/bftdetector",
-    "https://zenodo.org/records/7622528",
-    "https://github.com/Generative-Program-Analysis/icse23-artifact-evaluation",
-    "https://github.com/ucd-plse/On-the-Reproducibility",
+    # Kept as fallback; primary list comes from GITHUB_REPOS env variable / .env
 ]
 
 OPENHANDS_URL  = os.getenv("OPENHANDS_URL", "http://localhost:3000")
@@ -43,6 +34,7 @@ RESUME         = os.getenv("RESUME", "false").lower() in ("1", "true", "yes")
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 def _extract_json_object(text: str) -> dict | None:
+    from analyzer import _repair_json
     start = text.find("{")
     if start == -1:
         return None
@@ -64,10 +56,14 @@ def _extract_json_object(text: str) -> dict | None:
         elif ch == "}":
             depth -= 1
             if depth == 0:
+                candidate = text[start:i + 1]
                 try:
-                    return json.loads(text[start:i + 1])
+                    return json.loads(candidate)
                 except json.JSONDecodeError:
-                    return None
+                    try:
+                        return json.loads(_repair_json(candidate))
+                    except (json.JSONDecodeError, Exception):
+                        return None
     return None
 
 
@@ -90,12 +86,43 @@ def find_completed_result(url: str) -> pathlib.Path | None:
 
 
 def reproduce(url: str) -> ReproductionResult:
+    # Clean up stopped containers left over from previous repo processing.
+    # Done here (start of next repo) rather than at end of previous repo
+    # to guarantee that OpenHands has fully shut down its runtime container.
+    try:
+        import subprocess
+        pruned = subprocess.run(
+            ["docker", "container", "prune", "-f"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if pruned.stdout.strip():
+            print(f"    Docker cleanup: {pruned.stdout.strip()}")
+    except Exception:
+        pass
+
     slug = url.rstrip("/").split("/")[-1].replace(".git", "")
     out_path = RESULTS_DIR / f"{slug}_{int(time.time())}.json"
 
     repo_path, readme = clone_repo(url, WORKSPACE_PATH)
+
+    # Pre-analyze README for reproduction paths
+    path_analysis = None
+    if readme:
+        print("[1.5/3] Pre-analyzing README for reproduction paths...")
+        path_analysis = analyze_readme_paths(readme, OLLAMA_URL, ANALYSIS_MODEL)
+        if path_analysis and path_analysis.get("paths"):
+            print(f"    Found {len(path_analysis['paths'])} reproduction path(s):")
+            for p in path_analysis.get("recommended_order", []):
+                print(f"      - {p}")
+        else:
+            print("    No specific paths identified (will use default approach)")
+
+    # The orchestrator downloads to /workspace/{slug} but the OpenHands runtime
+    # sandbox sees the host workspace mounted at /repos (via SANDBOX_VOLUMES).
+    runtime_repo_base = os.getenv("RUNTIME_REPO_BASE", "/repos")
+    runtime_repo_path = f"{runtime_repo_base}/{repo_path.name}"
     agent_output, agent_events, conversation_id = run_openhands_agent(
-        OPENHANDS_URL, readme, str(repo_path)
+        OPENHANDS_URL, readme, runtime_repo_path, path_analysis=path_analysis
     )
 
     # Stop the OpenHands conversation before cleaning up the workspace.
@@ -112,10 +139,22 @@ def reproduce(url: str) -> ReproductionResult:
           f"errors={agent_quality['total_errors']}, "
           f"stuck={agent_quality['agent_stuck']})")
 
+    # Detect and classify timeout
+    timeout_info = None
+    if agent_output.startswith("TIMEOUT"):
+        timeout_info = classify_timeout(agent_events)
+        print(f"    Timeout type: {timeout_info['timeout_type']}")
+        print(f"    Phase reached: {timeout_info['phase_reached']}")
+        if timeout_info.get("experiment_was_running"):
+            print("    ** Experiment was running at timeout — positive signal **")
+
     partial = {
         "repo_url": url,
         "agent_output": agent_output,
+        "conversation_trace": agent_events,
         "agent_quality": agent_quality,
+        "path_analysis": path_analysis,
+        "timeout_info": timeout_info,
     }
     out_path.write_text(json.dumps(partial, indent=2))
     print(f"\nPartial result saved → {out_path}")
@@ -130,7 +169,17 @@ def reproduce(url: str) -> ReproductionResult:
     analysis = analyze_with_ollama(agent_output, OLLAMA_URL, ANALYSIS_MODEL,
                                    readme=readme or "",
                                    agent_quality=agent_quality,
-                                   prereq_missing=prereq_info)
+                                   prereq_missing=prereq_info,
+                                   timeout_info=timeout_info)
+
+    # Normalize LLM response: some models return lists instead of strings
+    for key in ("steps_completed", "outcome", "code_modifications",
+                "readme_adherence", "failure_reasons", "success_factors",
+                "detailed_description", "dependency_pinning"):
+        val = analysis.get(key)
+        if isinstance(val, list):
+            analysis[key] = "\n".join(str(item) for item in val)
+
     result = ReproductionResult(
         repo_url             = url,
         agent_output         = agent_output,
@@ -144,6 +193,9 @@ def reproduce(url: str) -> ReproductionResult:
         success_factors      = analysis.get("success_factors"),
         detailed_description = analysis.get("detailed_description", ""),
         agent_quality        = agent_quality,
+        path_analysis        = path_analysis,
+        timeout_info         = timeout_info,
+        dependency_pinning   = analysis.get("dependency_pinning"),
     )
 
     out_path.write_text(result.model_dump_json(indent=2))
@@ -154,6 +206,7 @@ def reproduce(url: str) -> ReproductionResult:
     # Clean up workspace AFTER analysis is complete and conversation is stopped
     shutil.rmtree(repo_path, ignore_errors=True)
     print(f"    Removed repo dir {repo_path}")
+
 
     return result
 
@@ -181,6 +234,9 @@ if __name__ == "__main__":
     else:
         subprocess.run(["find", str(workspace), "-mindepth", "1", "-delete"], check=True)
         subprocess.run(["find", str(RESULTS_DIR), "-mindepth", "1", "-delete"], check=True)
+
+    # Remove any leftover runtime containers from previous runs
+    cleanup_stale_runtime_containers()
 
     print(f"\n{'='*60}")
     print(f"Running {len(urls)} repo(s){' (resume mode)' if RESUME else ''}")

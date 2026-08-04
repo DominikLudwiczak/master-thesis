@@ -29,12 +29,13 @@ RUN sed -i "/'enum': \['true', 'false'\]/d" \
 
 # Condenser config — use observation masking to save context window
 # Keeps last N event outputs visible, masks older ones with <MASKED>
-RUN printf '[core]\nenable_default_condenser = false\n\n[condenser]\ntype = "observation_masking"\nattention_window = 20\n' > /app/config.toml
+ARG OPENHANDS_ATTENTION_WINDOW=25
+RUN printf "[core]\nenable_default_condenser = false\n\n[condenser]\ntype = \"observation_masking\"\nattention_window = ${OPENHANDS_ATTENTION_WINDOW}\n" > /app/config.toml
 
-# Reduce max_message_chars — default 30000 chars is too much per single observation.
-# 20000 is a good balance for 262K context models: enough to capture full stack
-# traces but not so much that pip install output drowns useful information.
-RUN sed -i 's/default=30_000/default=20_000/' \
+# Max chars per single observation message.
+# Configurable via build arg; default 30000 matches upstream OpenHands default.
+ARG OPENHANDS_MAX_MESSAGE_CHARS=30000
+RUN sed -i "s/default=30_000/default=${OPENHANDS_MAX_MESSAGE_CHARS}/" \
     /app/openhands/core/config/llm_config.py
 
 # Replace default 50/50 truncation with asymmetric head+mid+tail split
