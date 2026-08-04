@@ -40,10 +40,23 @@ services:
       ollama:
         condition: service_healthy
 
+  # Custom runtime image with Docker CLI (built once, used by openhands)
+  runtime-build:
+    build:
+      context: ./openhands
+      dockerfile: Dockerfile.runtime
+    image: openhands-runtime-docker:latest
+    container_name: runtime-build
+    restart: "no"
+    entrypoint: ["echo", "Runtime image built"]
+
   openhands:
     build:
       context: ./openhands
       dockerfile: Dockerfile
+      args:
+        OPENHANDS_MAX_MESSAGE_CHARS: "${OPENHANDS_MAX_MESSAGE_CHARS:-30000}"
+        OPENHANDS_ATTENTION_WINDOW: "${OPENHANDS_ATTENTION_WINDOW:-25}"
     container_name: openhands
     restart: unless-stopped
     ports:
@@ -56,7 +69,8 @@ services:
       LLM_MODEL: "ollama/${AGENT_MODEL:-qwen2.5-coder:14b}"
       LLM_BASE_URL: "http://host.docker.internal:11434"
       LLM_API_KEY: "ollama"
-      SANDBOX_RUNTIME_CONTAINER_IMAGE: "docker.openhands.dev/openhands/runtime:1.4-nikolaik"
+      SANDBOX_RUNTIME_CONTAINER_IMAGE: "openhands-runtime-docker:latest"
+      SANDBOX_VOLUMES: "/var/run/docker.sock:/var/run/docker.sock,${PWD}/workspace:/repos"
       WORKSPACE_MOUNT_PATH: "${PWD}/workspace"
       SANDBOX_RUNTIME_BINDING_ADDRESS: "0.0.0.0"
       LOG_ALL_EVENTS: "true"
@@ -87,9 +101,16 @@ services:
       GITHUB_REPOS: "${GITHUB_REPOS:-}"
       RESUME: "${RESUME:-false}"
       MAX_TIMEOUT_MINUTES: "${MAX_TIMEOUT_MINUTES:-60}"
+      AGENT_README_MAX_CHARS: "${AGENT_README_MAX_CHARS:-30000}"
+      EVENT_SUMMARY_MAX_CHARS: "${EVENT_SUMMARY_MAX_CHARS:-8000}"
+      EVENT_OUTPUT_MAX_CHARS: "${EVENT_OUTPUT_MAX_CHARS:-1000}"
+      ANALYZER_README_MAX_CHARS: "${ANALYZER_README_MAX_CHARS:-15000}"
+      ANALYZER_OUTPUT_MAX_CHARS: "${ANALYZER_OUTPUT_MAX_CHARS:-20000}"
     depends_on:
       openhands:
         condition: service_healthy
+      runtime-build:
+        condition: service_completed_successfully
 
 volumes:
   ollama_data:

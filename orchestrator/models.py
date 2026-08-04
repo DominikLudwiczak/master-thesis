@@ -14,3 +14,6 @@ class ReproductionResult(BaseModel):
     success_factors:     str | None   # what contributed to success if it did
     detailed_description: str         # comprehensive narrative of the entire run
     agent_quality:       dict | None = None  # quality metrics from classify_agent_run
+    path_analysis:       dict | None = None  # pre-analysis of README reproduction paths
+    timeout_info:        dict | None = None  # timeout classification if run timed out
+    dependency_pinning:  dict | str | None = None  # dependency version pinning assessment
